@@ -1,0 +1,178 @@
+﻿<AML>
+ <Item type="Method" id="29C46E0957D446F6974BD989DC8F21BA" action="add">
+  <execution_allowed_to keyed_name="World" type="Identity">A73B655731924CD0B027E4F4D5FCC0A9</execution_allowed_to>
+  <method_code><![CDATA[Innovator inn = this.getInnovator();
+
+string idList;
+if (this.getProperty("origin", "").Equals("manual"))
+{
+    idList = this.getProperty("idlist");
+}
+else
+{
+    idList = this.getAttribute("idlist", this.getID());
+}
+
+//Version each Part to ensure the latest preliminary version isnt overwritten
+Item versionPart = inn.newItem("Part", "version");
+versionPart.setAttribute("idlist", idList);
+Item versionPartReturn = versionPart.apply();
+
+//Create a dictionary to retain new versioned id to config id
+Dictionary<string, string> configAndVersionIDs = new Dictionary<string, string>();
+
+for (int p = 0; p < versionPartReturn.getItemCount(); p++)
+{
+    string versionID = versionPartReturn.getItemByIndex(p).getID();
+    string configID = versionPartReturn.getItemByIndex(p).getProperty("config_id");
+    configAndVersionIDs.Add(configID, versionID);
+}
+
+//Grab a list of not required part properties and relationship names
+Item listPartPropRel = inn.newItem("ItemType", "get");
+listPartPropRel.setProperty("name", "Part");
+listPartPropRel.setAttribute("relas_only", "1");
+Item propertyItem = inn.newItem("Property", "get");
+propertyItem.setAttribute("select", "name");
+propertyItem.setProperty("is_required", "0");
+Item relationshipItem = inn.newItem("RelationshipType", "get");
+relationshipItem.setAttribute("select", "name");
+listPartPropRel.addRelationship(propertyItem);
+listPartPropRel.addRelationship(relationshipItem);
+
+listPartPropRel = listPartPropRel.apply();
+
+Item propertyListItems = listPartPropRel.getItemsByXPath("//Item[@type='Property']");
+List<string> propertyNames = new List<string>();
+for (int i = 0; i < propertyListItems.getItemCount(); i++)
+{
+    propertyNames.Add(propertyListItems.getItemByIndex(i).getProperty("name"));
+}
+
+Item relationshipListItems = listPartPropRel.getItemsByXPath("//Item[@type='RelationshipType']");
+List<string> relationshipNames = new List<string>();
+for (int j = 0; j < relationshipListItems.getItemCount(); j++)
+{
+    relationshipNames.Add(relationshipListItems.getItemByIndex(j).getProperty("name"));
+}
+
+//Empty out any existing properties or relationships that were carried over from previous version
+string versionIDList = string.Join(",", configAndVersionIDs.Values);
+Item emptyPart = inn.newItem("Part", "edit");
+emptyPart.setAttribute("idlist", versionIDList);
+emptyPart.setAttribute("serverEvents", "0");
+emptyPart.setAttribute("version", "0");
+foreach (string propertyName in propertyNames)
+{
+    emptyPart.setProperty(propertyName, null);
+}
+foreach (string relationshipName in relationshipNames)
+{
+    Item deleteRelationships = inn.newItem(relationshipName, "delete");
+    string whereString = "[" + relationshipName.Replace(" ", "_") + "].id IS NOT NULL";
+    deleteRelationships.setAttribute("where", whereString);
+    emptyPart.addRelationship(deleteRelationships);
+}
+
+//Set Aras PLM permission
+Aras.Server.Security.Identity plmIdentity = Aras.Server.Security.Identity.GetByName("Aras PLM");
+bool PermissionWasSet = Aras.Server.Security.Permissions.GrantIdentity(plmIdentity);
+
+try
+{
+    
+    Item returnEmpty = emptyPart.apply();
+    
+    if (returnEmpty.isError())
+    {
+        return inn.newError($"Error in emptying new revisions in FRG_RollbacktoReleasedPart \n Error: {returnEmpty.getErrorString()}");
+    }
+    
+    //Grab latest released version and apply it to latest version
+    StringBuilder releaseQuery = new StringBuilder("<AML>");
+    foreach (string configID in configAndVersionIDs.Keys)
+    {
+        Item latestReleased = inn.newItem("Part", "get");
+        latestReleased.setAttribute("orderBy", "generation DESC");
+        latestReleased.setAttribute("maxRecords", "1");
+        latestReleased.setAttribute("levels", "1");
+        latestReleased.setAttribute("related_expand", "0");
+        latestReleased.setProperty("config_id", configID);
+        Item orCondition = latestReleased.newOR();
+        orCondition.setProperty("state", "Released");
+        orCondition.setProperty("state", "In Change");
+        latestReleased.setPropertyCondition("generation", "like");
+        latestReleased.setProperty("generation", "*");
+        releaseQuery.Append(latestReleased.node.OuterXml);
+    }
+    
+    Item updateToLatestRelease = inn.applyAML(releaseQuery.ToString() + "</AML>");
+    
+    List<string> releasedIDList = new List<string>();
+    StringBuilder updateQuery = new StringBuilder("<AML>");
+    for (int q = 0; q < updateToLatestRelease.getItemCount(); q++)
+    {
+        Item releasedItem = updateToLatestRelease.getItemByIndex(q);
+        releasedIDList.Add(releasedItem.getID());
+        string configID = releasedItem.getProperty("config_id", "");
+    
+        Item clonedItem = releasedItem.clone(true);
+    
+        clonedItem.setID(configAndVersionIDs[configID]);
+        clonedItem.setAction("edit");
+        clonedItem.setAttribute("serverEvents", "0");
+        clonedItem.setAttribute("version", "0");
+        
+        Item relCol = clonedItem.getRelationships();
+        for (int m = 0; m < relCol.getItemCount(); m++) {
+            relCol.getItemByIndex(m).setProperty("source_id", configAndVersionIDs[configID]);
+            relCol.getItemByIndex(m).removeProperty("permission_id");
+        }
+    
+        updateQuery.Append(clonedItem.node.OuterXml);
+    }
+    
+    Item updateResult = inn.applyAML(updateQuery.ToString() + "</AML>");
+    
+    if (updateResult.isError())
+    {
+        return inn.newError($"Error in updating new revisions in FRG_RollbacktoReleasedPart \n Error: {updateResult.getErrorString()}");
+    }
+
+
+    //Promote latest CAD to state Released, previous preliminary cad to Rollback, and previous Released CAD to Roll forward.
+    Item promoteLatestPart = inn.newItem("Part", "promoteItem");
+    promoteLatestPart.setAttribute("idlist", versionIDList);
+    promoteLatestPart.setProperty("state", "Released");
+    promoteLatestPart.setProperty("comments", "Part Rolled Back to Latest Released Version");
+    promoteLatestPart.apply();
+
+    Item promotePreviousVersion = inn.newItem("Part", "promoteItem");
+    promotePreviousVersion.setAttribute("serverEvents", "0");
+    promotePreviousVersion.setAttribute("idlist", idList);
+    promotePreviousVersion.setProperty("state", "Rolled Back (Preliminary)");
+    promotePreviousVersion.setProperty("comments", "Preliminary Part Rolled Back to Latest Released Version");
+    promotePreviousVersion.apply();
+
+    Item promoteLatestReleased = inn.newItem("Part", "promoteItem");
+    promoteLatestReleased.setAttribute("serverEvents", "0");
+    promoteLatestReleased.setAttribute("idlist", string.Join(",", releasedIDList));
+    promoteLatestReleased.setProperty("state", "Rolled Forward (Released)");
+    promoteLatestReleased.setProperty("comments", "Released Part Rolled Forward to latest Version");
+    promoteLatestReleased.apply();
+    
+}
+catch (Exception e)
+{
+    inn.newError("Error in FRG_RollbackToReleasedCAD in promoting CAD states or floating released version. " + e.Message);
+}
+finally
+{
+    if (PermissionWasSet) Aras.Server.Security.Permissions.RevokeIdentity(plmIdentity);
+}
+
+return this;]]></method_code>
+  <method_type>C#</method_type>
+  <name>FRG_RollbacktoReleasedPart</name>
+ </Item>
+</AML>

@@ -1,0 +1,132 @@
+﻿<AML>
+ <Item type="Method" id="7E1663A76C584F2FA9B5B965A3D31E1E" action="add">
+  <comments>Automatically votes rework on the change item on behalf of the change owner at any stage in the review process</comments>
+  <execution_allowed_to keyed_name="World" type="Identity">A73B655731924CD0B027E4F4D5FCC0A9</execution_allowed_to>
+  <method_code><![CDATA[Innovator inn = this.getInnovator();
+
+//Get current activity info
+Item activity_Assignment = inn.newItem("Activity Assignment", "get");
+
+Item activity_Task = inn.newItem("Activity Task", "get");
+activity_Task.setAttribute("select", "id");
+
+Item activity = inn.newItem("Activity", "get");
+activity.setPropertyCondition("active_date", "is not null");
+activity.setPropertyCondition("closed_date", "is null");
+activity.setPropertyCondition("subflow", "is null");
+activity.addRelationship(activity_Assignment);
+activity.addRelationship(activity_Task);
+
+Item wf_activity = inn.newItem("Workflow Process Activity", "get");
+wf_activity.setAttribute("select", "keyed_name, related_id");
+wf_activity.setRelatedItem(activity);
+
+Item wf_Process_Builder = inn.newItem("Workflow Process", "get");
+wf_Process_Builder.setAttribute("select", "keyed_name");
+wf_Process_Builder.addRelationship(wf_activity);
+
+Item wf = inn.newItem("Workflow", "get");
+wf.setRelatedItem(wf_Process_Builder);
+
+Item cmItm = inn.newItem("Express ECO", "get");
+cmItm.setAttribute("select", "owned_by_id");
+cmItm.setID(this.getProperty("changeID"));
+cmItm.addRelationship(wf);
+
+Item changeItemResult = cmItm.apply();
+
+//Set currently active Activity to Item
+Item currentActivity = changeItemResult.getItemsByXPath("//Item[@type='Activity']");
+Item activityAssignmentList = changeItemResult.getItemsByXPath("//Item[@type='Activity Assignment']");
+Item taskList = changeItemResult.getItemsByXPath("//Item[@type='Activity Task']");
+string wfp_ID = changeItemResult.getItemsByXPath("//Item[@type='Workflow Process']").getItemByIndex(0).getID();
+string changeOwnerID = changeItemResult.getProperty("owned_by_id", "");
+string currentActivityName = currentActivity.getProperty("name");
+
+//Add Change Owner to Assignment and Delete existing Assignments
+StringBuilder sb1 = new StringBuilder("<AML>");
+Item addChangeOwner = inn.newItem("Activity Assignment", "add");
+addChangeOwner.setProperty("voting_weight", "100");
+addChangeOwner.setProperty("related_id", changeOwnerID);
+addChangeOwner.setProperty("source_id", currentActivity.getID());
+sb1.Append(addChangeOwner.node.OuterXml);
+
+for (int i = 0; i < activityAssignmentList.getItemCount(); i++) {
+    string assignmentID = activityAssignmentList.getItemByIndex(i).getID();
+    Item deleteAssignments = inn.newItem("Activity Assignment", "delete");
+    deleteAssignments.setID(assignmentID);
+    sb1.Append(deleteAssignments.node.OuterXml);
+}
+Item approvalRes = inn.applyAML(sb1.ToString() + "</AML>");
+
+//Get Change Owner input comments from a popup to be assigned here
+string changeOwnerComments = this.getProperty("comment");
+
+//Create AML to vote Rework on behalf of Change Owner
+StringBuilder sb2 = new StringBuilder("<AML>");
+sb2.Append("<Item type='Activity' action='EvaluateActivity'>");
+sb2.Append("<Activity>" + currentActivity.getID() + "</Activity>");
+sb2.Append("<ActivityAssignment>" + approvalRes.getID() + "</ActivityAssignment>");
+sb2.Append("<Authentication></Authentication>");
+sb2.Append("<Comments>Change Owner: " + changeOwnerComments + "</Comments>");
+sb2.Append("<Complete>1</Complete>");
+sb2.Append("<Paths>");
+sb2.Append("<Path>Rework</Path>");
+sb2.Append("</Paths>");
+sb2.Append("<Tasks>");
+for (int i = 0; i < taskList.getItemCount(); i++) 
+{
+    Item taskItem = taskList.getItemByIndex(i);
+    sb2.Append("<Task id='" + taskItem.getID() + "' completed='1'></Task>");
+}
+sb2.Append("</Tasks>");
+sb2.Append("<Variables>");
+sb2.Append("</Variables>");
+sb2.Append("</Item>");
+
+Item voteRes = inn.applyAML(sb2.ToString() + "</AML>");
+
+//Restore assignment list so that it doesnt remain the change owner
+Item oldActivityAssignment = inn.newItem("Activity Assignment", "get");
+oldActivityAssignment.setAttribute("select", "keyed_name, id");
+
+Item activityReassign = inn.newItem("Activity", "get");
+activityReassign.setPropertyCondition("active_date", "is null");
+activityReassign.setPropertyCondition("closed_date", "is null");
+activityReassign.setPropertyCondition("subflow", "is null");
+activityReassign.setProperty("name", currentActivityName);
+activityReassign.addRelationship(activity_Assignment);
+
+Item wf_a = inn.newItem("Workflow Process Activity", "get");
+wf_a.setAttribute("select", "keyed_name, related_id");
+wf_a.setRelatedItem(activityReassign);
+
+Item wf_pb = inn.newItem("Workflow Process", "get");
+wf_pb.setAttribute("select", "keyed_name");
+wf_pb.setID(wfp_ID);
+wf_pb.addRelationship(wf_a);
+
+Item workflowProcessReturn = wf_pb.apply();
+
+Item newActivity = workflowProcessReturn.getItemsByXPath("//Item[@type='Activity']");
+Item changeOwnerAssignment  = workflowProcessReturn.getItemsByXPath("//Item[@type='Activity Assignment']");
+
+if (changeOwnerAssignment.node != null || changeOwnerAssignment.getItemCount() > 0) {
+    StringBuilder sb3 = new StringBuilder("<AML>");
+    Item deleteChangeOwner = inn.newItem("Activity Assignment", "delete");
+    deleteChangeOwner.setAttribute("where", "[Activity_Assignment].id='"+ changeOwnerAssignment.getItemByIndex(0).getID() +"'");
+    sb3.Append(deleteChangeOwner.node.OuterXml);
+
+    for (int k = 0; k < activityAssignmentList.getItemCount(); k++) {
+        Item oldAssignments = activityAssignmentList.getItemByIndex(k);
+        oldAssignments.setAction("add");
+        oldAssignments.setProperty("source_id", newActivity.getID());
+        sb3.Append(oldAssignments.node.OuterXml);
+    }
+    Item approvalRes2 = inn.applyAML(sb3.ToString() + "</AML>");
+} 
+return this;]]></method_code>
+  <method_type>C#</method_type>
+  <name>FRG_ChangeOwnerRework</name>
+ </Item>
+</AML>

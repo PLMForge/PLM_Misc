@@ -1,0 +1,51 @@
+﻿<AML>
+ <Item type="Method" id="D3AAEC2A73A747B3A9C8B7FFEA8B1C9A" action="add">
+  <comments>Changes Custom form into edit or non edit mode based on parent form</comments>
+  <execution_allowed_to keyed_name="World" type="Identity">A73B655731924CD0B027E4F4D5FCC0A9</execution_allowed_to>
+  <method_code><![CDATA[function updateFieldEditability(isEditable, dom) {
+    const impactSelectElements = dom.querySelectorAll('select.editable');
+    const notesContentElements = dom.querySelectorAll('div.editable');
+    impactSelectElements.forEach(select => {
+        const staticValueDisplay = select.nextElementSibling || dom.createElement('span'); // Create a span if not exists
+        if (!select.nextElementSibling) {
+            select.parentNode.insertBefore(staticValueDisplay, select.nextSibling); // Insert the span right after the select
+        }
+
+        if (isEditable) {
+            select.style.display = ''; // Show select
+            staticValueDisplay.style.display = 'none'; // Hide static value display
+        } else {
+            // Update and show static value display
+            staticValueDisplay.textContent = select.options[select.selectedIndex].text;
+            staticValueDisplay.style.display = ''; // Show static value
+            select.style.display = 'none'; // Hide select
+        }
+        select.disabled = !isEditable; // Optionally keep this if you want to disable the select instead of hiding
+    });
+
+    notesContentElements.forEach(div => {
+        div.contentEditable = isEditable ? "true" : "false";
+        div.style.backgroundColor = isEditable ? "white" : "transparent"; // Example styling change
+    });
+}
+
+var parentItem;
+var domItem;
+var editState;
+
+if (typeof inArgs != "undefined") {
+  parentItem = inArgs.contextWindow.parent.item;
+  domItem = inArgs.contextDom;
+  editState = domItem.isEditMode;
+} else {
+    parentItem = document.thisItem;
+    domItem = document;
+    editState = parentItem.getAttribute("isEditState", "0") === "1";
+}
+
+updateFieldEditability(editState, domItem);
+]]></method_code>
+  <method_type>JavaScript</method_type>
+  <name>FRG_ECR_CIA_Update</name>
+ </Item>
+</AML>

@@ -1,0 +1,196 @@
+﻿<AML>
+ <Item type="Method" id="8BBF7B51DBCC46E2B34A1204968F3EF2" action="add">
+  <comments>Grabs custom items on load and sets listener to update to server on change</comments>
+  <execution_allowed_to keyed_name="World" type="Identity">A73B655731924CD0B027E4F4D5FCC0A9</execution_allowed_to>
+  <method_code><![CDATA[function pullData() {
+    const inn = aras.newIOMInnovator();
+    
+    const parentItem = document.thisItem;
+    var items;
+    if (parentItem.getAction() == "add") {
+        items = parentItem.node.querySelectorAll('Item[type="ECR Custom"]');
+    } else {
+        const ecrID = parentItem.getID();
+        const amlString = `<AML><Item action='get' type='ECR' id='${ecrID}' relas_only='1'><Relationships><Item action='get' type='ECR CIA' select='id, frg_group, frg_description, frg_impacted, frg_notes'></Item></Relationships></Item></AML>`
+        var impactItems = inn.applyAML(amlString);
+        items = impactItems.dom.querySelectorAll('Item[type="ECR Custom"]');
+    }
+
+    return transformNL(items);
+}
+
+function transformNL(nodeList) {
+    return Array.from(nodeList).map(item => {
+        // Check for each element's existence before accessing its innerHTML
+        const groupElement = item.getElementsByTagName("frg_group")[0];
+        const descriptionElement = item.getElementsByTagName("frg_description")[0];
+        const impactElement = item.getElementsByTagName("frg_impacted")[0];
+        const notesElement = item.getElementsByTagName("frg_notes")[0];
+        
+        return {
+            id: item.getAttribute("id") || '',
+            group: groupElement ? groupElement.innerHTML : '',
+            description: descriptionElement ? descriptionElement.innerHTML : '',
+            impact: impactElement ? impactElement.innerHTML : '',
+            notes: notesElement ? notesElement.innerHTML : ''
+        }
+    });
+}
+
+
+function handleFieldUpdate(relID, relProperty, value) {
+    const parentItem = document.thisItem;
+    const inn = aras.newIOMInnovator();
+    
+    var ciaList = parentItem.getRelationships("ECR CIA");
+
+    if (ciaList.getItemCount() == 0) {
+        var newItemRel = inn.newItem("ECR CIA", "merge");
+        newItemRel.setID(relID);
+        newItemRel.setProperty(relProperty, value);
+        
+        parentItem.addRelationship(newItemRel);
+    } else {
+        for (var i = 0; i < ciaList.getItemCount(); i++) {
+            relItem = ciaList.getItemByIndex(i);
+            if (relItem.getID() == relID) {
+                relItem.setProperty(relProperty, value);
+                break;
+            }
+            if (i == (ciaList.getItemCount() - 1)) {
+                var newItemRel = inn.newItem("ECR CIA", "merge");
+                newItemRel.setID(relID);
+                newItemRel.setProperty(relProperty, value);
+                
+                parentItem.addRelationship(newItemRel);
+            }
+        }
+    }
+    
+}
+
+function loadForm() {
+    const inn = aras.newIOMInnovator();
+
+    const tableBody = document.getElementById('dataTable').getElementsByTagName('tbody')[0];
+    tableBody.innerHTML = ''; // Clear existing data
+    
+    let lastGroup = null;
+    let groupRowCount = 0;
+    let firstGroupRow = null;
+    let groupStartIndex = null;
+    
+    const data = pullData();
+    
+    data.forEach((item, index) => {
+        const row = tableBody.insertRow();
+    
+        if(item.id) {
+            row.id = item.id;
+        }
+    
+        if (item.group !== lastGroup) {
+            if (firstGroupRow && groupRowCount > 1) {
+                firstGroupRow.cells[0].rowSpan = groupRowCount;
+            }
+    
+            groupRowCount = 1;
+            lastGroup = item.group;
+            row.classList.add("group-border-divider");
+            row.classList.add("first-group-row");
+            firstGroupRow = row;
+    
+            const cell = row.insertCell();
+            cell.textContent = item.group;
+        } else {
+            groupRowCount++;
+        }
+    
+        const descriptionCell = row.insertCell();
+        descriptionCell.textContent = item.description;
+        descriptionCell.setAttribute('data-column', 'frg_description');
+    
+        const impactCell = row.insertCell();
+        impactCell.innerHTML = `<select class="editable">
+                                    <option value="Y" ${item.impact === 'Y' ? 'selected' : ''}>Y</option>
+                                    <option value="N" ${item.impact === 'N' ? 'selected' : ''}>N</option>
+                                </select>
+                                <span class="static-value" style="display: none;"></span>`;
+        impactCell.setAttribute('data-column', 'frg_impacted');
+    
+        const notesCell = row.insertCell();
+        notesCell.innerHTML = `<div class="editable" contenteditable="true">${item.notes}</div>`;
+        notesCell.setAttribute('data-column', 'frg_notes');
+        
+        if (item.impact === 'Y') {
+            if (row == firstGroupRow) {
+                for (let i = 1; i < row.cells.length; i++) {
+                    row.cells[i].classList.add('impact-highlight');
+                }
+            } else {
+                row.classList.add('impact-highlight');
+            }
+            
+        }
+        
+    });
+    
+    // Final group adjustment
+    if (firstGroupRow && groupRowCount > 1) {
+        firstGroupRow.cells[0].rowSpan = groupRowCount;
+    }
+    
+    // Event listener for handling select changes
+    tableBody.addEventListener('change', function(event) {
+        if (event.target.matches('select.editable')) {
+            const relID = event.target.closest('tr').id;
+            const relProperty = event.target.closest('td').getAttribute('data-column');
+            const newValue = event.target.value;
+            handleFieldUpdate(relID, relProperty, newValue);
+            
+            const row = event.target.closest('tr');
+            if (newValue === 'Y' && relProperty === 'frg_impacted') {
+                let isFirstGroupRow = row.classList.contains('first-group-row');
+                if (isFirstGroupRow) {
+                    for (let i = 1; i < row.cells.length; i++) {
+                        row.cells[i].classList.add('impact-highlight');
+                    }
+                } else {
+                    row.classList.add('impact-highlight');
+                }
+            } else {
+                for (let i = 0; i < row.cells.length; i++) {
+                    row.cells[i].classList.remove('impact-highlight');
+                }
+                row.classList.remove("impact-highlight");
+            }
+        }
+    });
+    
+    // Event listener for handling blur on contenteditable divs
+    tableBody.addEventListener('blur', function(event) {
+        if (event.target.matches('div.editable[contenteditable="true"]')) {
+            const relID = event.target.closest('tr').id;
+            const relProperty = event.target.closest('td').getAttribute('data-column');
+            const newValue = event.target.textContent;
+            handleFieldUpdate(relID, relProperty, newValue);
+        }
+    }, true);
+    
+    var methodArgs = {
+        contextWindow: window,
+        contextDom: document
+    };
+    
+    aras.evalMethod("FRG_ECR_CIA_Update", this.node, methodArgs);
+    
+    window.frameElement.scrolling="yes";
+    
+
+}
+
+loadForm();]]></method_code>
+  <method_type>JavaScript</method_type>
+  <name>FRG_ECR_CIA_OnLoad</name>
+ </Item>
+</AML>

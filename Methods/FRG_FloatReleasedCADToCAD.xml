@@ -1,0 +1,117 @@
+﻿<AML>
+ <Item type="Method" id="06BB672110A548F39E96B872ECA17C9A" action="add">
+  <comments>Floats released CAD to latest current and released Parents.</comments>
+  <execution_allowed_to keyed_name="World" type="Identity">A73B655731924CD0B027E4F4D5FCC0A9</execution_allowed_to>
+  <method_code><![CDATA[Innovator inn = this.getInnovator();
+
+//Get any most current parents using this item
+Item parentCAD = inn.newItem(this.getType(), "get");
+parentCAD.setAttribute("relas_only", "1");
+Item parentCADStructure = inn.newItem("CAD Structure", "get");
+Item childCAD = inn.newItem(this.getType(), "get");
+childCAD.setProperty("config_id", this.getProperty("config_id"));
+
+parentCADStructure.setRelatedItem(childCAD);
+parentCAD.addRelationship(parentCADStructure);
+
+//Get all Released Parents using this item
+Item latestReleasedParent = inn.newItem("CAD", "get");
+Item orCondition = latestReleasedParent.newOR();
+orCondition.setProperty("state", "Released");
+orCondition.setProperty("state", "In Change");
+latestReleasedParent.setPropertyCondition("generation", "like");
+latestReleasedParent.setProperty("generation", "*");
+Item releasedCADStructure = inn.newItem("CAD Structure", "get");
+Item releasedChild = inn.newItem(this.getType(), "get");
+releasedChild.setProperty("config_id", this.getProperty("config_id"));
+
+releasedCADStructure.setRelatedItem(releasedChild);
+latestReleasedParent.addRelationship(releasedCADStructure);
+
+Item listReleasedParents = latestReleasedParent.apply();
+
+//Get list of CAD Structure IDs from only latest released parents
+Dictionary<string, (string ID, int gen)> dict = new Dictionary<string, (string ID, int gen)>();
+for (int k=0; k < listReleasedParents.getItemCount(); k++) {
+    Item releasedParentItem = listReleasedParents.getItemByIndex(k);
+    string releasedParentConfigID = releasedParentItem.getProperty("config_id");
+    int releasedParentGen = int.Parse(releasedParentItem.getProperty("generation"));
+    string relatedStructureID = releasedParentItem.getRelationships("CAD Structure").getItemByIndex(0).getID();
+
+    if(!dict.ContainsKey(releasedParentConfigID)) {
+        dict[releasedParentConfigID] = (relatedStructureID, releasedParentGen);
+    } else {
+        if (releasedParentGen > dict[releasedParentConfigID].gen) {
+            dict[releasedParentConfigID] = (relatedStructureID, releasedParentGen);
+        }
+    }
+}
+
+//Get all Part CAD relationships from latest Released Part Parents
+Item releasedParentItems = inn.newItem("Part", "get");
+releasedParentItems.setAttribute("relas_only", "1");
+Item orState = releasedParentItems.newOR();
+orState.setProperty("state", "In Change");
+orState.setProperty("state", "Released");
+Item partCADItems = inn.newItem("Part CAD", "get");
+Item childCADofPart = inn.newItem("CAD", "get");
+childCADofPart.setProperty("config_id", this.getProperty("config_id"));
+
+partCADItems.setRelatedItem(childCADofPart);
+releasedParentItems.addRelationship(partCADItems);
+
+Item partCADStruct = releasedParentItems.apply();
+
+
+//Set permission
+Aras.Server.Security.Identity plmIdentity = Aras.Server.Security.Identity.GetByName("Aras PLM");
+bool PermissionWasSet = Aras.Server.Security.Permissions.GrantIdentity(plmIdentity);
+
+try {
+    Item listparentCADStructure = parentCAD.apply();
+    //Update current CAD Parents
+    StringBuilder sb = new StringBuilder("<AML>");
+    for (int i = 0; i < listparentCADStructure.getItemCount(); i++) {
+        Item cadStructureItem = listparentCADStructure.getItemByIndex(i);
+        cadStructureItem.setAction("edit");
+        cadStructureItem.setAttribute("serverEvents", "0");
+        cadStructureItem.setAttribute("version", "0");
+        cadStructureItem.setProperty("related_id", this.getID());
+        
+        sb.Append(cadStructureItem.node.OuterXml);
+    }//Update remaining released CAD Parents
+    foreach(var pair in dict.Values) {
+        Item cadStructureItem2 = inn.newItem("CAD Structure", "edit");
+        cadStructureItem2.setID(pair.ID);
+        cadStructureItem2.setAttribute("serverEvents", "0");
+        cadStructureItem2.setAttribute("version", "0");
+        cadStructureItem2.setProperty("related_id", this.getID());
+        
+        sb.Append(cadStructureItem2.node.OuterXml);
+    }//Update released Part to CAD relationship
+    for (int j = 0; j < partCADStruct.getItemCount(); j++) {
+        Item partStructureItem = partCADStruct.getItemByIndex(j);
+        partStructureItem.setAction("edit");
+        partStructureItem.setAttribute("serverEvents", "0");
+        partStructureItem.setAttribute("version", "0");
+        partStructureItem.setProperty("related_id", this.getID());
+        
+        sb.Append(partStructureItem.node.OuterXml);
+    }
+    
+    //Update most current Parents that use this item number to point to latest released version
+    Item res = inn.applyAML(sb.ToString() + "</AML>");
+}
+catch (Exception e){
+    inn.newError("Error in FRG_FloatReleasedPartToPart in getting Parent Parts. " + e.Message);
+}
+finally {
+    if (PermissionWasSet) Aras.Server.Security.Permissions.RevokeIdentity(plmIdentity);
+}
+
+return this;
+]]></method_code>
+  <method_type>C#</method_type>
+  <name>FRG_FloatReleasedCADToCAD</name>
+ </Item>
+</AML>
