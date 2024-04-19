@@ -1,0 +1,47 @@
+﻿<AML>
+ <Item type="Method" id="1CDAA4522B1C4B27AD13926924796AF8" action="add">
+  <comments>Updates Search CSS to color and add icon to documents/drawings that contain redlines</comments>
+  <execution_allowed_to keyed_name="World" type="Identity">A73B655731924CD0B027E4F4D5FCC0A9</execution_allowed_to>
+  <method_code><![CDATA[Innovator inn = this.getInnovator();
+List<string> idList = new List<string>();
+List<string> redlineSourceIDs = new List<string>();
+string myCss;
+
+for (int j = 0; j < this.getItemCount(); j++) {
+    Item thisItem = this.getItemByIndex(j);
+    idList.Add(thisItem.getID());
+}
+
+string idListString = String.Join(", ", idList.ToArray());
+
+Item redlineQuery = inn.newItem("Redlines", "get");
+redlineQuery.setAttribute("select", "frg_source");
+redlineQuery.setProperty("state", "Active");
+redlineQuery.setAttribute("serverEvents", "0");
+Item redlineSource = inn.newItem("Redline Sources", "get");
+redlineSource.setAttribute("idlist", idListString);
+redlineSource.setAttribute("select", "id");
+redlineSource.setAttribute("serverEvents", "0");
+
+redlineQuery.setPropertyItem("frg_source", redlineSource);
+
+Item redlineResult = redlineQuery.apply();
+
+if (!redlineResult.isError()) {
+    
+    for (int i=0; i < redlineResult.getItemCount(); i++) {
+        Item sourceItem = redlineResult.getItemByIndex(i).getPropertyItem("frg_source");
+        string sourceItemID = sourceItem.getID();
+        if (idList.Contains(sourceItemID)) {
+            Item redlinedItem = this.getItemsByXPath("//Item[@id='" + sourceItemID + "']");
+            myCss = ".item_number { background-color: #ffe3eb; background-image: url('../images/RedlineView.svg'); background-repeat: no-repeat; background-position: left center; background-size: 25px 25px; padding-left: 30px}"  ;
+            redlinedItem.setProperty("css",myCss);
+        }
+    }
+}
+
+return this;]]></method_code>
+  <method_type>C#</method_type>
+  <name>FRG_RedlineNotice</name>
+ </Item>
+</AML>
